@@ -19,6 +19,7 @@ class TaskDbHelper(context: Context) : SQLiteOpenHelper(context, DB_NAME, null, 
                 context_name TEXT NOT NULL DEFAULT '',
                 due_at INTEGER,
                 reminder_at INTEGER,
+                completed_at INTEGER,
                 created_at INTEGER NOT NULL,
                 updated_at INTEGER NOT NULL
             )
@@ -26,18 +27,21 @@ class TaskDbHelper(context: Context) : SQLiteOpenHelper(context, DB_NAME, null, 
         )
         db.execSQL("CREATE INDEX idx_tasks_due_at ON tasks(due_at)")
         db.execSQL("CREATE INDEX idx_tasks_status ON tasks(status)")
+        db.execSQL("CREATE INDEX idx_tasks_completed_at ON tasks(completed_at)")
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
-        // Future versions will use additive migrations here. Never drop the tasks table.
+        if (oldVersion < 2) {
+            db.execSQL("ALTER TABLE tasks ADD COLUMN completed_at INTEGER")
+            db.execSQL("CREATE INDEX IF NOT EXISTS idx_tasks_completed_at ON tasks(completed_at)")
+            db.execSQL("UPDATE tasks SET completed_at = updated_at WHERE status = 'DONE' AND completed_at IS NULL")
+        }
     }
 
-    fun insert(task: TaskItem): Long {
-        return writableDatabase.insertOrThrow("tasks", null, task.toValues(includeId = false))
-    }
+    fun insert(task: TaskItem): Long = writableDatabase.insertOrThrow("tasks", null, task.toValues(false))
 
     fun update(task: TaskItem) {
-        writableDatabase.update("tasks", task.toValues(includeId = false), "id=?", arrayOf(task.id.toString()))
+        writableDatabase.update("tasks", task.toValues(false), "id=?", arrayOf(task.id.toString()))
     }
 
     fun delete(id: Long) {
@@ -45,9 +49,7 @@ class TaskDbHelper(context: Context) : SQLiteOpenHelper(context, DB_NAME, null, 
     }
 
     fun get(id: Long): TaskItem? {
-        readableDatabase.query(
-            "tasks", null, "id=?", arrayOf(id.toString()), null, null, null, "1"
-        ).use { c ->
+        readableDatabase.query("tasks", null, "id=?", arrayOf(id.toString()), null, null, null, "1").use { c ->
             return if (c.moveToFirst()) c.toTask() else null
         }
     }
@@ -64,9 +66,7 @@ class TaskDbHelper(context: Context) : SQLiteOpenHelper(context, DB_NAME, null, 
                 CASE priority WHEN 'URGENT' THEN 0 WHEN 'HIGH' THEN 1 ELSE 2 END,
                 created_at DESC
             """.trimIndent(), null
-        ).use { c ->
-            while (c.moveToNext()) result += c.toTask()
-        }
+        ).use { c -> while (c.moveToNext()) result += c.toTask() }
         return result
     }
 
@@ -90,6 +90,7 @@ class TaskDbHelper(context: Context) : SQLiteOpenHelper(context, DB_NAME, null, 
         put("context_name", contextName)
         if (dueAt == null) putNull("due_at") else put("due_at", dueAt)
         if (reminderAt == null) putNull("reminder_at") else put("reminder_at", reminderAt)
+        if (completedAt == null) putNull("completed_at") else put("completed_at", completedAt)
         put("created_at", createdAt)
         put("updated_at", updatedAt)
     }
@@ -97,8 +98,8 @@ class TaskDbHelper(context: Context) : SQLiteOpenHelper(context, DB_NAME, null, 
     private fun android.database.Cursor.toTask(): TaskItem {
         fun str(name: String) = getString(getColumnIndexOrThrow(name))
         fun lng(name: String): Long? {
-            val i = getColumnIndexOrThrow(name)
-            return if (isNull(i)) null else getLong(i)
+            val i = getColumnIndex(name)
+            return if (i < 0 || isNull(i)) null else getLong(i)
         }
         return TaskItem(
             id = getLong(getColumnIndexOrThrow("id")),
@@ -110,6 +111,7 @@ class TaskDbHelper(context: Context) : SQLiteOpenHelper(context, DB_NAME, null, 
             contextName = str("context_name"),
             dueAt = lng("due_at"),
             reminderAt = lng("reminder_at"),
+            completedAt = lng("completed_at"),
             createdAt = getLong(getColumnIndexOrThrow("created_at")),
             updatedAt = getLong(getColumnIndexOrThrow("updated_at"))
         )
@@ -117,6 +119,6 @@ class TaskDbHelper(context: Context) : SQLiteOpenHelper(context, DB_NAME, null, 
 
     companion object {
         private const val DB_NAME = "roozyaar.db"
-        private const val DB_VERSION = 1
+        private const val DB_VERSION = 2
     }
 }

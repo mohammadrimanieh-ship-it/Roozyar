@@ -1,14 +1,11 @@
 package ir.roozyaar.planner
 
-import android.app.DatePickerDialog
 import android.app.TimePickerDialog
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -16,18 +13,19 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.platform.LocalLayoutDirection
+import kotlinx.coroutines.delay
+import java.time.DayOfWeek
 import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.LocalTime
 import java.time.ZoneId
-import java.util.Calendar
 
 private val Bg = Color(0xFF0E1624)
 private val Surface1 = Color(0xFF172235)
@@ -49,7 +47,8 @@ private val AppColors = darkColorScheme(
     error = Danger
 )
 
-private enum class MainScreen { TODAY, ROUTINE, CALENDAR, CATEGORIES }
+private enum class MainScreen { TODAY, ROUTINE, CALENDAR, COMPLETED, REPORTS }
+private enum class CompletedFilter(val label: String) { TODAY("امروز"), WEEK("این هفته"), MONTH("این ماه"), ALL("همه") }
 
 @Composable
 fun RoozYaarRoot(viewModel: TaskViewModel) {
@@ -65,7 +64,7 @@ fun RoozYaarRoot(viewModel: TaskViewModel) {
         CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
             Scaffold(
                 containerColor = Bg,
-                floatingActionButtonPosition = FabPosition.Center,
+                floatingActionButtonPosition = FabPosition.End,
                 floatingActionButton = {
                     FloatingActionButton(
                         onClick = { editorTask = null; showEditor = true },
@@ -75,20 +74,13 @@ fun RoozYaarRoot(viewModel: TaskViewModel) {
                 },
                 bottomBar = {
                     NavigationBar(containerColor = Surface1) {
-                        NavItem("✓", "امروز", screen == MainScreen.TODAY) {
-                            screen = MainScreen.TODAY
-                        }
+                        NavItem("✓", "امروز", screen == MainScreen.TODAY) { screen = MainScreen.TODAY }
                         NavItem("◉", "روتین", screen == MainScreen.ROUTINE) {
-                            viewModel.refreshRoutines()
-                            screen = MainScreen.ROUTINE
+                            viewModel.refreshRoutines(); screen = MainScreen.ROUTINE
                         }
-                        Spacer(Modifier.width(52.dp))
-                        NavItem("▦", "تقویم", screen == MainScreen.CALENDAR) {
-                            screen = MainScreen.CALENDAR
-                        }
-                        NavItem("▤", "دسته‌ها", screen == MainScreen.CATEGORIES) {
-                            screen = MainScreen.CATEGORIES
-                        }
+                        NavItem("▦", "تقویم", screen == MainScreen.CALENDAR) { screen = MainScreen.CALENDAR }
+                        NavItem("☑", "انجام‌شده", screen == MainScreen.COMPLETED) { screen = MainScreen.COMPLETED }
+                        NavItem("▥", "گزارش", screen == MainScreen.REPORTS) { screen = MainScreen.REPORTS }
                     }
                 }
             ) { padding ->
@@ -103,19 +95,10 @@ fun RoozYaarRoot(viewModel: TaskViewModel) {
                             onDone = viewModel::setDone,
                             onEdit = { editorTask = it; showEditor = true }
                         )
-                        MainScreen.ROUTINE -> RoutineScreen(
-                            routines = routines,
-                            onToggle = viewModel::toggleRoutine,
-                            onAdjust = viewModel::adjustRoutine
-                        )
-                        MainScreen.CALENDAR -> CalendarScreen(tasks, viewModel::setDone) {
-                            editorTask = it; showEditor = true
-                        }
-                        MainScreen.CATEGORIES -> CategoriesScreen(tasks) { category, waiting ->
-                            categoryFilter = category
-                            waitingOnly = waiting
-                            screen = MainScreen.TODAY
-                        }
+                        MainScreen.ROUTINE -> RoutineScreen(routines, viewModel::toggleRoutine, viewModel::adjustRoutine)
+                        MainScreen.CALENDAR -> CalendarScreen(tasks, viewModel::setDone) { editorTask = it; showEditor = true }
+                        MainScreen.COMPLETED -> CompletedScreen(tasks, viewModel::setDone) { editorTask = it; showEditor = true }
+                        MainScreen.REPORTS -> ReportsScreen(tasks, routines)
                     }
                 }
             }
@@ -124,13 +107,8 @@ fun RoozYaarRoot(viewModel: TaskViewModel) {
                 TaskEditorDialog(
                     task = editorTask,
                     onDismiss = { showEditor = false },
-                    onSave = {
-                        viewModel.save(it)
-                        showEditor = false
-                    },
-                    onDelete = editorTask?.let { task ->
-                        { viewModel.delete(task); showEditor = false }
-                    }
+                    onSave = { viewModel.save(it); showEditor = false },
+                    onDelete = editorTask?.let { task -> { viewModel.delete(task); showEditor = false } }
                 )
             }
         }
@@ -142,9 +120,33 @@ private fun RowScope.NavItem(icon: String, label: String, selected: Boolean, onC
     NavigationBarItem(
         selected = selected,
         onClick = onClick,
-        icon = { Text(icon, fontSize = 20.sp) },
-        label = { Text(label) }
+        icon = { Text(icon, fontSize = 18.sp) },
+        label = { Text(label, fontSize = 10.sp) }
     )
+}
+
+@Composable
+private fun LiveHeader() {
+    var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            now = System.currentTimeMillis()
+            delay(1000)
+        }
+    }
+    Surface(shape = RoundedCornerShape(22.dp), color = Surface1, modifier = Modifier.fillMaxWidth()) {
+        Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("My Planner", fontSize = 27.sp, fontWeight = FontWeight.ExtraBold)
+                Spacer(Modifier.height(5.dp))
+                Text(PersianDate.header(now), color = Muted, fontSize = 14.sp)
+            }
+            Column(horizontalAlignment = Alignment.End) {
+                Text(PersianDate.time(now), color = Accent, fontSize = 29.sp, fontWeight = FontWeight.ExtraBold)
+                Text("ساعت دستگاه", color = Muted, fontSize = 10.sp)
+            }
+        }
+    }
 }
 
 @Composable
@@ -157,7 +159,6 @@ private fun TodayScreen(
     onDone: (TaskItem, Boolean) -> Unit,
     onEdit: (TaskItem) -> Unit
 ) {
-    val now = System.currentTimeMillis()
     val zone = ZoneId.systemDefault()
     val endToday = LocalDate.now(zone).plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli() - 1
     val open = tasks.filter { it.status != TaskStatus.DONE }
@@ -172,8 +173,7 @@ private fun TodayScreen(
             else -> true
         }
     }
-    val next = filtered
-        .filter { it.status == TaskStatus.ACTIVE }
+    val next = filtered.filter { it.status == TaskStatus.ACTIVE }
         .minWithOrNull(compareBy<TaskItem> { it.dueAt ?: Long.MAX_VALUE }.thenByDescending { it.priority.ordinal })
     val dueNow = filtered.filter { it.status == TaskStatus.ACTIVE && it.dueAt != null && it.dueAt <= endToday }
     val future = filtered.filter { it.status == TaskStatus.ACTIVE && it.dueAt != null && it.dueAt > endToday }
@@ -182,14 +182,10 @@ private fun TodayScreen(
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(start = 18.dp, end = 18.dp, top = 22.dp, bottom = 110.dp),
+        contentPadding = PaddingValues(start = 18.dp, end = 18.dp, top = 18.dp, bottom = 110.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
-        item {
-            Text("روز‌یار", fontSize = 28.sp, fontWeight = FontWeight.ExtraBold)
-            Spacer(Modifier.height(4.dp))
-            Text(PersianDate.header(now), color = Muted, fontSize = 14.sp)
-        }
+        item { LiveHeader() }
         item {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 StatCard("فوری", urgentCount, Danger, Modifier.weight(1f))
@@ -199,20 +195,8 @@ private fun TodayScreen(
         }
         item {
             LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                item {
-                    FilterChip(
-                        selected = categoryFilter == null && !waitingOnly,
-                        onClick = { onFilterCategory(null) },
-                        label = { Text("همه") }
-                    )
-                }
-                item {
-                    FilterChip(
-                        selected = waitingOnly,
-                        onClick = { onWaiting(!waitingOnly) },
-                        label = { Text("⏳ منتظر دیگران") }
-                    )
-                }
+                item { FilterChip(selected = categoryFilter == null && !waitingOnly, onClick = { onFilterCategory(null) }, label = { Text("همه") }) }
+                item { FilterChip(selected = waitingOnly, onClick = { onWaiting(!waitingOnly) }, label = { Text("⏳ منتظر دیگران") }) }
                 items(TaskCategory.entries) { cat ->
                     FilterChip(
                         selected = categoryFilter == cat,
@@ -222,7 +206,6 @@ private fun TodayScreen(
                 }
             }
         }
-
         if (next != null && !waitingOnly) {
             item {
                 Text("کار بعدی پیشنهادی", fontWeight = FontWeight.Bold, fontSize = 17.sp)
@@ -230,7 +213,6 @@ private fun TodayScreen(
                 NextTaskCard(next, onDone, onEdit)
             }
         }
-
         if (dueNow.isNotEmpty()) {
             item { SectionTitle("امروز و عقب‌افتاده", dueNow.size) }
             items(dueNow, key = { it.id }) { TaskCard(it, onDone, onEdit) }
@@ -247,11 +229,7 @@ private fun TodayScreen(
             item { SectionTitle("بدون زمان", noDate.size) }
             items(noDate, key = { it.id }) { TaskCard(it, onDone, onEdit) }
         }
-        if (filtered.isEmpty()) {
-            item {
-                EmptyState("فعلاً کاری اینجا نیست", "با دکمه + اولین کار را خیلی سریع ثبت کن.")
-            }
-        }
+        if (filtered.isEmpty()) item { EmptyState("فعلاً کاری اینجا نیست", "با دکمه + اولین کار را ثبت کن.") }
     }
 }
 
@@ -270,7 +248,6 @@ private fun NextTaskCard(task: TaskItem, onDone: (TaskItem, Boolean) -> Unit, on
     Surface(
         shape = RoundedCornerShape(22.dp),
         color = Accent.copy(alpha = 0.13f),
-        tonalElevation = 0.dp,
         modifier = Modifier.fillMaxWidth().clickable { onEdit(task) }
     ) {
         Row(Modifier.padding(18.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -280,9 +257,7 @@ private fun NextTaskCard(task: TaskItem, onDone: (TaskItem, Boolean) -> Unit, on
                 Text(task.title, fontSize = 18.sp, fontWeight = FontWeight.Bold)
                 task.dueAt?.let { Text("⏰ ${PersianDate.relativeDue(it)}", color = Muted, fontSize = 13.sp) }
             }
-            Button(onClick = { onDone(task, true) }, colors = ButtonDefaults.buttonColors(containerColor = Accent, contentColor = Bg)) {
-                Text("انجام شد")
-            }
+            Button(onClick = { onDone(task, true) }, colors = ButtonDefaults.buttonColors(containerColor = Accent, contentColor = Bg)) { Text("انجام شد") }
         }
     }
 }
@@ -300,7 +275,7 @@ private fun TaskCard(task: TaskItem, onDone: (TaskItem, Boolean) -> Unit, onEdit
     val overdue = task.dueAt?.let { it < System.currentTimeMillis() } == true && task.status != TaskStatus.DONE
     Surface(
         shape = RoundedCornerShape(18.dp),
-        color = Surface1,
+        color = if (task.status == TaskStatus.DONE) Accent.copy(alpha = 0.10f) else Surface1,
         modifier = Modifier.fillMaxWidth().clickable { onEdit(task) }
     ) {
         Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -313,7 +288,7 @@ private fun TaskCard(task: TaskItem, onDone: (TaskItem, Boolean) -> Unit, onEdit
             Column(Modifier.weight(1f)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(task.title, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
-                    if (task.priority != TaskPriority.NORMAL) {
+                    if (task.priority != TaskPriority.NORMAL && task.status != TaskStatus.DONE) {
                         val c = if (task.priority == TaskPriority.URGENT) Danger else Warning
                         Text(task.priority.label, color = c, fontSize = 11.sp)
                     }
@@ -327,15 +302,13 @@ private fun TaskCard(task: TaskItem, onDone: (TaskItem, Boolean) -> Unit, onEdit
                     color = Muted,
                     fontSize = 12.sp
                 )
-                task.dueAt?.let {
-                    Text(
-                        (if (overdue) "عقب‌افتاده • " else "") + PersianDate.relativeDue(it),
-                        color = if (overdue) Danger else Muted,
-                        fontSize = 12.sp
-                    )
-                }
-                if (task.status == TaskStatus.WAITING) {
-                    Text("⏳ منتظر دیگران", color = Accent, fontSize = 12.sp)
+                if (task.status == TaskStatus.DONE) {
+                    task.completedAt?.let { Text("✓ انجام‌شده در ${PersianDate.fullDate(it)} • ${PersianDate.time(it)}", color = Accent, fontSize = 12.sp) }
+                } else {
+                    task.dueAt?.let {
+                        Text((if (overdue) "عقب‌افتاده • " else "") + PersianDate.relativeDue(it), color = if (overdue) Danger else Muted, fontSize = 12.sp)
+                    }
+                    if (task.status == TaskStatus.WAITING) Text("⏳ منتظر دیگران", color = Accent, fontSize = 12.sp)
                 }
             }
         }
@@ -343,23 +316,19 @@ private fun TaskCard(task: TaskItem, onDone: (TaskItem, Boolean) -> Unit, onEdit
 }
 
 @Composable
-private fun CalendarScreen(
-    tasks: List<TaskItem>,
-    onDone: (TaskItem, Boolean) -> Unit,
-    onEdit: (TaskItem) -> Unit
-) {
+private fun CalendarScreen(tasks: List<TaskItem>, onDone: (TaskItem, Boolean) -> Unit, onEdit: (TaskItem) -> Unit) {
     val dated = tasks.filter { it.status != TaskStatus.DONE && it.dueAt != null }.sortedBy { it.dueAt }
     val zone = ZoneId.systemDefault()
     val groups = dated.groupBy { Instant.ofEpochMilli(it.dueAt!!).atZone(zone).toLocalDate() }
 
     LazyColumn(
         Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(18.dp, 22.dp, 18.dp, 110.dp),
+        contentPadding = PaddingValues(18.dp, 20.dp, 18.dp, 110.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         item {
-            Text("تقویم کارها", fontSize = 26.sp, fontWeight = FontWeight.ExtraBold)
-            Text("کارهای زمان‌دار آینده و عقب‌افتاده", color = Muted)
+            Text("تقویم شمسی کارها", fontSize = 26.sp, fontWeight = FontWeight.ExtraBold)
+            Text("تاریخ‌ها در برنامه به صورت شمسی نمایش داده می‌شوند.", color = Muted)
         }
         if (groups.isEmpty()) item { EmptyState("کاری زمان‌بندی نشده", "برای یک کار تاریخ و ساعت تعیین کن تا اینجا دیده شود.") }
         groups.forEach { (_, itemsForDate) ->
@@ -370,42 +339,151 @@ private fun CalendarScreen(
 }
 
 @Composable
-private fun CategoriesScreen(tasks: List<TaskItem>, onOpen: (TaskCategory?, Boolean) -> Unit) {
-    val open = tasks.filter { it.status != TaskStatus.DONE }
+private fun CompletedScreen(tasks: List<TaskItem>, onDone: (TaskItem, Boolean) -> Unit, onEdit: (TaskItem) -> Unit) {
+    var filter by remember { mutableStateOf(CompletedFilter.WEEK) }
+    val zone = ZoneId.systemDefault()
+    val today = LocalDate.now(zone)
+    val todayStart = today.atStartOfDay(zone).toInstant().toEpochMilli()
+    val tomorrowStart = today.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli()
+    val daysFromSaturday = (today.dayOfWeek.value - DayOfWeek.SATURDAY.value + 7) % 7
+    val weekStart = today.minusDays(daysFromSaturday.toLong()).atStartOfDay(zone).toInstant().toEpochMilli()
+
+    val done = tasks.filter { it.status == TaskStatus.DONE }.sortedByDescending { it.completedAt ?: it.updatedAt }
+    val filtered = done.filter { task ->
+        val completed = task.completedAt ?: task.updatedAt
+        when (filter) {
+            CompletedFilter.TODAY -> completed in todayStart until tomorrowStart
+            CompletedFilter.WEEK -> completed >= weekStart
+            CompletedFilter.MONTH -> PersianDate.sameJalaliMonth(completed)
+            CompletedFilter.ALL -> true
+        }
+    }
+
     LazyColumn(
         Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(18.dp, 22.dp, 18.dp, 110.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp)
+        contentPadding = PaddingValues(18.dp, 20.dp, 18.dp, 110.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         item {
-            Text("دسته‌ها", fontSize = 26.sp, fontWeight = FontWeight.ExtraBold)
-            Text("کارها را بر اساس بخش‌های زندگی و پروژه‌ها جدا نگه دار.", color = Muted)
+            Text("انجام‌شده‌ها", fontSize = 26.sp, fontWeight = FontWeight.ExtraBold)
+            Text("کارهای انجام‌شده حذف نمی‌شوند و اینجا می‌مانند.", color = Muted)
         }
         item {
-            CategoryCard("⏳", "منتظر دیگران", open.count { it.status == TaskStatus.WAITING }, Accent) {
-                onOpen(null, true)
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                items(CompletedFilter.entries) { f ->
+                    FilterChip(selected = filter == f, onClick = { filter = f }, label = { Text(f.label) })
+                }
             }
         }
-        items(TaskCategory.entries) { cat ->
-            CategoryCard(cat.emoji, cat.label, open.count { it.category == cat }, Color.White) {
-                onOpen(cat, false)
+        if (filtered.isEmpty()) item { EmptyState("هنوز کاری ثبت نشده", "وقتی کاری را انجام‌شده علامت بزنی، اینجا دیده می‌شود.") }
+        items(filtered, key = { it.id }) { TaskCard(it, onDone, onEdit) }
+    }
+}
+
+@Composable
+private fun ReportsScreen(tasks: List<TaskItem>, routines: List<RoutineEntry>) {
+    val zone = ZoneId.systemDefault()
+    val now = System.currentTimeMillis()
+    val today = LocalDate.now(zone)
+    val todayStart = today.atStartOfDay(zone).toInstant().toEpochMilli()
+    val tomorrowStart = today.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli()
+    val daysFromSaturday = (today.dayOfWeek.value - DayOfWeek.SATURDAY.value + 7) % 7
+    val weekStart = today.minusDays(daysFromSaturday.toLong()).atStartOfDay(zone).toInstant().toEpochMilli()
+
+    val total = tasks.size
+    val done = tasks.filter { it.status == TaskStatus.DONE }
+    val open = tasks.filter { it.status != TaskStatus.DONE }
+    val completedToday = done.count { (it.completedAt ?: it.updatedAt) in todayStart until tomorrowStart }
+    val completedWeek = done.count { (it.completedAt ?: it.updatedAt) >= weekStart }
+    val completedMonth = done.count { PersianDate.sameJalaliMonth(it.completedAt ?: it.updatedAt, now) }
+    val overdue = open.count { it.dueAt != null && it.dueAt < now }
+    val completionPercent = if (total == 0) 0 else ((done.size * 100.0) / total).toInt()
+    val routineDone = routines.count { it.done }
+
+    LazyColumn(
+        Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(18.dp, 20.dp, 18.dp, 110.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        item {
+            Text("گزارش‌ها", fontSize = 26.sp, fontWeight = FontWeight.ExtraBold)
+            Text("خلاصه عملکرد کارها و روتین‌های روزانه", color = Muted)
+        }
+        item {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                ReportMetric("امروز", completedToday, Accent, Modifier.weight(1f))
+                ReportMetric("این هفته", completedWeek, Warning, Modifier.weight(1f))
+                ReportMetric("این ماه", completedMonth, Color.White, Modifier.weight(1f))
             }
+        }
+        item {
+            Surface(shape = RoundedCornerShape(20.dp), color = Surface1, modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(16.dp)) {
+                    Text("وضعیت کل کارها", fontWeight = FontWeight.Bold, fontSize = 17.sp)
+                    Spacer(Modifier.height(12.dp))
+                    ReportLine("کل کارهای ثبت‌شده", total)
+                    ReportLine("انجام‌شده", done.size)
+                    ReportLine("باز و در انتظار", open.size)
+                    ReportLine("عقب‌افتاده", overdue, Danger)
+                    Spacer(Modifier.height(10.dp))
+                    LinearProgressIndicator(
+                        progress = { completionPercent / 100f },
+                        modifier = Modifier.fillMaxWidth().height(9.dp),
+                        color = Accent,
+                        trackColor = Surface2
+                    )
+                    Spacer(Modifier.height(7.dp))
+                    Text("درصد انجام کل: ${PersianDate.toFa(completionPercent)}٪", color = Accent, fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+        item {
+            Surface(shape = RoundedCornerShape(20.dp), color = Surface1, modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(16.dp)) {
+                    Text("روتین امروز", fontWeight = FontWeight.Bold, fontSize = 17.sp)
+                    Spacer(Modifier.height(8.dp))
+                    Text("${PersianDate.toFa(routineDone)} از ${PersianDate.toFa(routines.size)} مورد انجام شده", color = Accent)
+                }
+            }
+        }
+        item { Text("بر اساس دسته‌بندی", fontSize = 18.sp, fontWeight = FontWeight.Bold) }
+        items(TaskCategory.entries) { cat ->
+            val allCat = tasks.filter { it.category == cat }
+            val doneCat = allCat.count { it.status == TaskStatus.DONE }
+            CategoryReportCard(cat, allCat.size, doneCat)
         }
     }
 }
 
 @Composable
-private fun CategoryCard(emoji: String, label: String, count: Int, color: Color, onClick: () -> Unit) {
-    Surface(
-        shape = RoundedCornerShape(18.dp),
-        color = Surface1,
-        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick)
-    ) {
-        Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text(emoji, fontSize = 24.sp)
-            Spacer(Modifier.width(12.dp))
-            Text(label, modifier = Modifier.weight(1f), fontWeight = FontWeight.SemiBold, color = color)
-            Text("${PersianDate.toFa(count)} کار", color = Muted)
+private fun ReportMetric(label: String, count: Int, color: Color, modifier: Modifier = Modifier) {
+    Surface(shape = RoundedCornerShape(18.dp), color = Surface1, modifier = modifier) {
+        Column(Modifier.padding(vertical = 14.dp, horizontal = 8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(PersianDate.toFa(count), fontSize = 24.sp, fontWeight = FontWeight.ExtraBold, color = color)
+            Text(label, color = Muted, fontSize = 11.sp)
+        }
+    }
+}
+
+@Composable
+private fun ReportLine(label: String, value: Int, valueColor: Color = Color.White) {
+    Row(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+        Text(label, color = Muted, modifier = Modifier.weight(1f))
+        Text(PersianDate.toFa(value), color = valueColor, fontWeight = FontWeight.Bold)
+    }
+}
+
+@Composable
+private fun CategoryReportCard(category: TaskCategory, total: Int, done: Int) {
+    val p = if (total == 0) 0f else done.toFloat() / total.toFloat()
+    Surface(shape = RoundedCornerShape(18.dp), color = Surface1, modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(14.dp)) {
+            Row(Modifier.fillMaxWidth()) {
+                Text("${category.emoji} ${category.label}", modifier = Modifier.weight(1f), fontWeight = FontWeight.SemiBold)
+                Text("${PersianDate.toFa(done)} / ${PersianDate.toFa(total)}", color = Accent)
+            }
+            Spacer(Modifier.height(8.dp))
+            LinearProgressIndicator(progress = { p }, modifier = Modifier.fillMaxWidth().height(6.dp), color = Accent, trackColor = Surface2)
         }
     }
 }
@@ -439,21 +517,13 @@ private fun TaskEditorDialog(
     var waiting by remember(task?.id) { mutableStateOf(task?.status == TaskStatus.WAITING) }
     var dueAt by remember(task?.id) { mutableStateOf(task?.dueAt) }
     var reminderEnabled by remember(task?.id) { mutableStateOf(task?.reminderAt != null || task == null) }
+    var showJalaliPicker by remember { mutableStateOf(false) }
 
-    val chooseDate = {
-        val zdt = Instant.ofEpochMilli(dueAt ?: System.currentTimeMillis()).atZone(ZoneId.systemDefault())
-        DatePickerDialog(context, { _, y, m, d ->
-            val time = dueAt?.let { Instant.ofEpochMilli(it).atZone(ZoneId.systemDefault()).toLocalTime() } ?: LocalTime.of(9, 0)
-            dueAt = LocalDateTime.of(LocalDate.of(y, m + 1, d), time)
-                .atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
-        }, zdt.year, zdt.monthValue - 1, zdt.dayOfMonth).show()
-    }
     val chooseTime = {
         val zdt = Instant.ofEpochMilli(dueAt ?: System.currentTimeMillis()).atZone(ZoneId.systemDefault())
         TimePickerDialog(context, { _, h, m ->
             val date = dueAt?.let { Instant.ofEpochMilli(it).atZone(ZoneId.systemDefault()).toLocalDate() } ?: LocalDate.now()
-            dueAt = LocalDateTime.of(date, LocalTime.of(h, m))
-                .atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
+            dueAt = LocalDateTime.of(date, LocalTime.of(h, m)).atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
         }, zdt.hour, zdt.minute, true).show()
     }
 
@@ -462,7 +532,7 @@ private fun TaskEditorDialog(
         containerColor = Surface1,
         title = { Text(if (task == null) "کار جدید" else "ویرایش کار") },
         text = {
-            LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.heightIn(max = 600.dp)) {
+            LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.heightIn(max = 620.dp)) {
                 item {
                     OutlinedTextField(
                         value = title,
@@ -487,9 +557,7 @@ private fun TaskEditorDialog(
                     Text("اولویت", fontWeight = FontWeight.Bold)
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                         FilterChip(selected = priority == null, onClick = { priority = null }, label = { Text("خودکار") })
-                        TaskPriority.entries.forEach { p ->
-                            FilterChip(selected = priority == p, onClick = { priority = p }, label = { Text(p.label) })
-                        }
+                        TaskPriority.entries.forEach { p -> FilterChip(selected = priority == p, onClick = { priority = p }, label = { Text(p.label) }) }
                     }
                 }
                 item {
@@ -502,15 +570,17 @@ private fun TaskEditorDialog(
                     )
                 }
                 item {
+                    Text("تاریخ و ساعت یادآوری", fontWeight = FontWeight.Bold)
+                    Spacer(Modifier.height(6.dp))
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedButton(onClick = chooseDate, modifier = Modifier.weight(1f)) {
-                            Text(dueAt?.let { PersianDate.shortDate(it) } ?: "تاریخ")
+                        OutlinedButton(onClick = { showJalaliPicker = true }, modifier = Modifier.weight(1f)) {
+                            Text(dueAt?.let { PersianDate.shortDate(it) } ?: "تقویم شمسی")
                         }
                         OutlinedButton(onClick = chooseTime, modifier = Modifier.weight(1f)) {
                             Text(dueAt?.let { PersianDate.time(it) } ?: "ساعت")
                         }
-                        if (dueAt != null) TextButton(onClick = { dueAt = null }) { Text("حذف") }
                     }
+                    if (dueAt != null) TextButton(onClick = { dueAt = null }) { Text("حذف تاریخ و ساعت") }
                 }
                 item {
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -525,37 +595,17 @@ private fun TaskEditorDialog(
                     }
                 }
                 item {
-                    OutlinedTextField(
-                        value = notes,
-                        onValueChange = { notes = it },
-                        label = { Text("توضیحات (اختیاری)") },
-                        modifier = Modifier.fillMaxWidth(),
-                        minLines = 2
-                    )
+                    OutlinedTextField(value = notes, onValueChange = { notes = it }, label = { Text("توضیحات (اختیاری)") }, modifier = Modifier.fillMaxWidth(), minLines = 2)
                 }
                 if (onDelete != null) {
-                    item {
-                        TextButton(onClick = onDelete, colors = ButtonDefaults.textButtonColors(contentColor = Danger)) {
-                            Text("حذف این کار")
-                        }
-                    }
+                    item { TextButton(onClick = onDelete, colors = ButtonDefaults.textButtonColors(contentColor = Danger)) { Text("حذف این کار") } }
                 }
             }
         },
         confirmButton = {
             Button(
                 onClick = {
-                    onSave(TaskDraft(
-                        id = task?.id,
-                        title = title,
-                        notes = notes,
-                        category = category,
-                        priority = priority,
-                        waiting = waiting,
-                        contextName = contextName,
-                        dueAt = dueAt,
-                        reminderEnabled = reminderEnabled
-                    ))
+                    onSave(TaskDraft(task?.id, title, notes, category, priority, waiting, contextName, dueAt, reminderEnabled))
                 },
                 enabled = title.isNotBlank(),
                 colors = ButtonDefaults.buttonColors(containerColor = Accent, contentColor = Bg)
@@ -563,14 +613,98 @@ private fun TaskEditorDialog(
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("انصراف") } }
     )
+
+    if (showJalaliPicker) {
+        JalaliDatePickerDialog(
+            initialMillis = dueAt ?: System.currentTimeMillis(),
+            onDismiss = { showJalaliPicker = false },
+            onSelect = { jalali ->
+                val gregorian = PersianDate.toGregorian(jalali)
+                val time = dueAt?.let { Instant.ofEpochMilli(it).atZone(ZoneId.systemDefault()).toLocalTime() } ?: LocalTime.of(9, 0)
+                dueAt = LocalDateTime.of(gregorian, time).atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
+                showJalaliPicker = false
+            }
+        )
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun JalaliDatePickerDialog(initialMillis: Long, onDismiss: () -> Unit, onSelect: (JalaliDate) -> Unit) {
+    val zone = ZoneId.systemDefault()
+    val initial = PersianDate.fromGregorian(Instant.ofEpochMilli(initialMillis).atZone(zone).toLocalDate())
+    var year by remember { mutableIntStateOf(initial.year) }
+    var month by remember { mutableIntStateOf(initial.month) }
+    var selectedDay by remember { mutableIntStateOf(initial.day) }
+
+    fun previousMonth() {
+        if (month == 1) { month = 12; year-- } else month--
+        selectedDay = selectedDay.coerceAtMost(PersianDate.daysInMonth(year, month))
+    }
+    fun nextMonth() {
+        if (month == 12) { month = 1; year++ } else month++
+        selectedDay = selectedDay.coerceAtMost(PersianDate.daysInMonth(year, month))
+    }
+
+    val firstDow = PersianDate.toGregorian(JalaliDate(year, month, 1)).dayOfWeek
+    val offset = when (firstDow) {
+        DayOfWeek.SATURDAY -> 0
+        DayOfWeek.SUNDAY -> 1
+        DayOfWeek.MONDAY -> 2
+        DayOfWeek.TUESDAY -> 3
+        DayOfWeek.WEDNESDAY -> 4
+        DayOfWeek.THURSDAY -> 5
+        DayOfWeek.FRIDAY -> 6
+    }
+    val days = PersianDate.daysInMonth(year, month)
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = Surface1,
+        title = { Text("انتخاب تاریخ شمسی") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(onClick = ::previousMonth) { Text("›", fontSize = 28.sp) }
+                    Text("${PersianDate.monthName(month)} ${PersianDate.toFa(year)}", modifier = Modifier.weight(1f), textAlign = TextAlign.Center, fontWeight = FontWeight.Bold)
+                    IconButton(onClick = ::nextMonth) { Text("‹", fontSize = 28.sp) }
+                }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    listOf("ش", "ی", "د", "س", "چ", "پ", "ج").forEach { Text(it, color = Muted, modifier = Modifier.width(36.dp), textAlign = TextAlign.Center) }
+                }
+                FlowRow(maxItemsInEachRow = 7, horizontalArrangement = Arrangement.spacedBy(4.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    repeat(offset) { Spacer(Modifier.size(36.dp)) }
+                    for (day in 1..days) {
+                        val selected = day == selectedDay
+                        if (selected) {
+                            Button(
+                                onClick = { selectedDay = day },
+                                modifier = Modifier.size(36.dp),
+                                contentPadding = PaddingValues(0.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = Accent, contentColor = Bg)
+                            ) { Text(PersianDate.toFa(day), fontSize = 11.sp) }
+                        } else {
+                            OutlinedButton(
+                                onClick = { selectedDay = day },
+                                modifier = Modifier.size(36.dp),
+                                contentPadding = PaddingValues(0.dp)
+                            ) { Text(PersianDate.toFa(day), fontSize = 11.sp) }
+                        }
+                    }
+                }
+                TextButton(onClick = {
+                    val t = PersianDate.fromGregorian(LocalDate.now())
+                    year = t.year; month = t.month; selectedDay = t.day
+                }) { Text("امروز") }
+            }
+        },
+        confirmButton = { Button(onClick = { onSelect(JalaliDate(year, month, selectedDay)) }, colors = ButtonDefaults.buttonColors(containerColor = Accent, contentColor = Bg)) { Text("انتخاب") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("انصراف") } }
+    )
 }
 
 @Composable
-private fun RoutineScreen(
-    routines: List<RoutineEntry>,
-    onToggle: (RoutineEntry) -> Unit,
-    onAdjust: (RoutineEntry, Double) -> Unit
-) {
+private fun RoutineScreen(routines: List<RoutineEntry>, onToggle: (RoutineEntry) -> Unit, onAdjust: (RoutineEntry, Double) -> Unit) {
     val doneCount = routines.count { it.done }
     val total = routines.size.coerceAtLeast(1)
     val progress = doneCount.toFloat() / total.toFloat()
@@ -578,7 +712,7 @@ private fun RoutineScreen(
 
     LazyColumn(
         Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(18.dp, 22.dp, 18.dp, 110.dp),
+        contentPadding = PaddingValues(18.dp, 20.dp, 18.dp, 110.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         item {
@@ -593,28 +727,16 @@ private fun RoutineScreen(
                         Text("${PersianDate.toFa(doneCount)} از ${PersianDate.toFa(routines.size)}", color = Accent)
                     }
                     Spacer(Modifier.height(10.dp))
-                    LinearProgressIndicator(
-                        progress = { progress },
-                        modifier = Modifier.fillMaxWidth().height(8.dp),
-                        color = Accent,
-                        trackColor = Surface2
-                    )
+                    LinearProgressIndicator(progress = { progress }, modifier = Modifier.fillMaxWidth().height(8.dp), color = Accent, trackColor = Surface2)
                 }
             }
         }
-
         item { Text("آماده برای امروز", fontSize = 18.sp, fontWeight = FontWeight.Bold) }
         item { PreparedCard("🌐", "زبان امروز", prepared.language) }
         item { PreparedCard("📖", "قرآن امروز", prepared.quran) }
         item { PreparedCard("📚", "کتاب پیشنهادی", prepared.book) }
-
-        item {
-            Spacer(Modifier.height(4.dp))
-            Text("ثبت روتین‌ها", fontSize = 18.sp, fontWeight = FontWeight.Bold)
-        }
-        items(routines, key = { it.template.key }) { entry ->
-            RoutineCard(entry, onToggle, onAdjust)
-        }
+        item { Spacer(Modifier.height(4.dp)); Text("ثبت روتین‌ها", fontSize = 18.sp, fontWeight = FontWeight.Bold) }
+        items(routines, key = { it.template.key }) { entry -> RoutineCard(entry, onToggle, onAdjust) }
     }
 }
 
@@ -630,17 +752,9 @@ private fun PreparedCard(emoji: String, title: String, body: String) {
 }
 
 @Composable
-private fun RoutineCard(
-    entry: RoutineEntry,
-    onToggle: (RoutineEntry) -> Unit,
-    onAdjust: (RoutineEntry, Double) -> Unit
-) {
+private fun RoutineCard(entry: RoutineEntry, onToggle: (RoutineEntry) -> Unit, onAdjust: (RoutineEntry, Double) -> Unit) {
     val t = entry.template
-    Surface(
-        shape = RoundedCornerShape(18.dp),
-        color = if (entry.done) Accent.copy(alpha = 0.12f) else Surface1,
-        modifier = Modifier.fillMaxWidth()
-    ) {
+    Surface(shape = RoundedCornerShape(18.dp), color = if (entry.done) Accent.copy(alpha = 0.12f) else Surface1, modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(15.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(t.emoji, fontSize = 25.sp)
@@ -650,46 +764,24 @@ private fun RoutineCard(
                     Text(t.subtitle, color = Muted, fontSize = 12.sp)
                 }
                 if (t.kind == RoutineKind.TOGGLE) {
-                    Checkbox(
-                        checked = entry.done,
-                        onCheckedChange = { onToggle(entry) },
-                        colors = CheckboxDefaults.colors(checkedColor = Accent)
-                    )
-                } else if (entry.done) {
-                    Text("✓", color = Accent, fontWeight = FontWeight.ExtraBold, fontSize = 20.sp)
-                }
+                    Checkbox(checked = entry.done, onCheckedChange = { onToggle(entry) }, colors = CheckboxDefaults.colors(checkedColor = Accent))
+                } else if (entry.done) Text("✓", color = Accent, fontWeight = FontWeight.ExtraBold, fontSize = 20.sp)
             }
-
             if (t.kind != RoutineKind.TOGGLE) {
                 Spacer(Modifier.height(12.dp))
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    OutlinedButton(
-                        onClick = { onAdjust(entry, -t.step) },
-                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp)
-                    ) { Text("−") }
-
+                    OutlinedButton(onClick = { onAdjust(entry, -t.step) }, contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp)) { Text("−") }
                     Text(
-                        if (t.key == "sleep") {
-                            "${formatRoutineValue(entry.value)} ${t.unit}"
-                        } else {
-                            "${PersianDate.toFa(formatRoutineValue(entry.value))} / ${PersianDate.toFa(formatRoutineValue(t.target))} ${t.unit}"
-                        },
+                        if (t.key == "sleep") "${formatRoutineValue(entry.value)} ${t.unit}" else "${PersianDate.toFa(formatRoutineValue(entry.value))} / ${PersianDate.toFa(formatRoutineValue(t.target))} ${t.unit}",
                         fontWeight = FontWeight.Bold,
                         modifier = Modifier.weight(1f),
                         textAlign = TextAlign.Center
                     )
-
-                    Button(
-                        onClick = { onAdjust(entry, t.step) },
-                        colors = ButtonDefaults.buttonColors(containerColor = Accent, contentColor = Bg),
-                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp)
-                    ) { Text("+") }
+                    Button(onClick = { onAdjust(entry, t.step) }, colors = ButtonDefaults.buttonColors(containerColor = Accent, contentColor = Bg), contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp)) { Text("+") }
                 }
             }
         }
     }
 }
 
-private fun formatRoutineValue(value: Double): String {
-    return if (value % 1.0 == 0.0) value.toInt().toString() else String.format(java.util.Locale.US, "%.1f", value)
-}
+private fun formatRoutineValue(value: Double): String = if (value % 1.0 == 0.0) value.toInt().toString() else String.format(java.util.Locale.US, "%.1f", value)

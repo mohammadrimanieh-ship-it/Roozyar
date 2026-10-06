@@ -32,6 +32,7 @@ data class TaskItem(
     val contextName: String = "",
     val dueAt: Long? = null,
     val reminderAt: Long? = null,
+    val completedAt: Long? = null,
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis()
 )

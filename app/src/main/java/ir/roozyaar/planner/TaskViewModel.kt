@@ -25,15 +25,11 @@ class TaskViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun refresh() {
-        viewModelScope.launch {
-            _tasks.value = withContext(Dispatchers.IO) { db.all() }
-        }
+        viewModelScope.launch { _tasks.value = withContext(Dispatchers.IO) { db.all() } }
     }
 
     fun refreshRoutines() {
-        viewModelScope.launch {
-            _routines.value = withContext(Dispatchers.IO) { routineDb.entries() }
-        }
+        viewModelScope.launch { _routines.value = withContext(Dispatchers.IO) { routineDb.entries() } }
     }
 
     fun toggleRoutine(entry: RoutineEntry) {
@@ -81,6 +77,7 @@ class TaskViewModel(app: Application) : AndroidViewModel(app) {
                     contextName = draft.contextName.trim(),
                     dueAt = due,
                     reminderAt = reminder,
+                    completedAt = null,
                     createdAt = now,
                     updatedAt = now
                 )
@@ -98,6 +95,7 @@ class TaskViewModel(app: Application) : AndroidViewModel(app) {
                     contextName = draft.contextName.trim(),
                     dueAt = due,
                     reminderAt = if (old.status == TaskStatus.DONE) null else reminder,
+                    completedAt = old.completedAt,
                     updatedAt = now
                 )
                 db.update(updated)
@@ -109,10 +107,12 @@ class TaskViewModel(app: Application) : AndroidViewModel(app) {
 
     fun setDone(task: TaskItem, done: Boolean) {
         viewModelScope.launch(Dispatchers.IO) {
+            val now = System.currentTimeMillis()
             val updated = task.copy(
                 status = if (done) TaskStatus.DONE else TaskStatus.ACTIVE,
-                reminderAt = null,
-                updatedAt = System.currentTimeMillis()
+                reminderAt = if (done) null else task.dueAt,
+                completedAt = if (done) now else null,
+                updatedAt = now
             )
             db.update(updated)
             ReminderScheduler.cancel(getApplication(), task.id)
