@@ -1,6 +1,7 @@
 package ir.roozyaar.planner
 
 import android.Manifest
+import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
@@ -22,13 +23,19 @@ object NotificationHelper {
                 "یادآوری کارها",
                 NotificationManager.IMPORTANCE_HIGH
             ).apply {
-                description = "یادآوری کارهای ثبت‌شده در روز‌یار"
+                description = "یادآوری کارهای ثبت‌شده در My Planner"
+                enableVibration(true)
+                vibrationPattern = longArrayOf(0, 250, 150, 250)
+                lockscreenVisibility = Notification.VISIBILITY_PUBLIC
             }
-            context.getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
+            context.getSystemService(NotificationManager::class.java)
+                .createNotificationChannel(channel)
         }
     }
 
     fun showTask(context: Context, task: TaskItem) {
+        createChannel(context)
+
         if (Build.VERSION.SDK_INT >= 33 &&
             ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
         ) return
@@ -69,13 +76,17 @@ object NotificationHelper {
                 append(task.category.emoji).append(' ').append(task.category.label)
                 task.dueAt?.let { append(" • ").append(PersianDate.relativeDue(it)) }
             })
-            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setPriority(NotificationCompat.PRIORITY_MAX)
+            .setCategory(NotificationCompat.CATEGORY_REMINDER)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            .setDefaults(NotificationCompat.DEFAULT_ALL)
             .setAutoCancel(true)
             .setContentIntent(openApp)
             .addAction(0, "انجام شد", doneIntent)
             .addAction(0, "۱۰ دقیقه بعد", snoozeIntent)
             .build()
 
-        NotificationManagerCompat.from(context).notify(ReminderScheduler.safeRequestCode(task.id), notification)
+        NotificationManagerCompat.from(context)
+            .notify(ReminderScheduler.safeRequestCode(task.id), notification)
     }
 }

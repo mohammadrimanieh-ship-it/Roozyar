@@ -14,11 +14,22 @@ object ReminderScheduler {
         val alarm = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
         val pending = alarmPendingIntent(context, task.id)
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && alarm.canScheduleExactAlarms()) {
-            alarm.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, pending)
-        } else {
+        try {
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S || alarm.canScheduleExactAlarms()) {
+                alarm.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, pending)
+            } else {
+                // Fallback if the user has not granted "Alarms & reminders" access yet.
+                alarm.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, pending)
+            }
+        } catch (_: SecurityException) {
             alarm.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, pending)
         }
+    }
+
+    fun canScheduleExactly(context: Context): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return true
+        val alarm = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+        return alarm.canScheduleExactAlarms()
     }
 
     fun cancel(context: Context, taskId: Long) {

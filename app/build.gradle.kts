@@ -12,8 +12,27 @@ android {
         applicationId = "ir.roozyaar.planner"
         minSdk = 24
         targetSdk = 36
-        versionCode = 3
-        versionName = "0.3.0"
+        versionCode = 4
+        versionName = "0.3.1"
+    }
+
+    signingConfigs {
+        create("release") {
+            val keystorePath = System.getenv("MYPLANNER_KEYSTORE_PATH") ?: ""
+            if (keystorePath.isNotBlank()) {
+                storeFile = file(keystorePath)
+            }
+            storePassword = System.getenv("MYPLANNER_KEYSTORE_PASSWORD") ?: ""
+            keyAlias = System.getenv("MYPLANNER_KEY_ALIAS") ?: ""
+            keyPassword = System.getenv("MYPLANNER_KEY_PASSWORD") ?: ""
+        }
+    }
+
+    buildTypes {
+        getByName("release") {
+            isMinifyEnabled = false
+            signingConfig = signingConfigs.getByName("release")
+        }
     }
 
     buildFeatures {
