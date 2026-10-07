@@ -13,15 +13,24 @@ import kotlinx.coroutines.withContext
 class TaskViewModel(app: Application) : AndroidViewModel(app) {
     private val db = TaskDbHelper(app)
     private val routineDb = RoutineDbHelper(app)
+    private val projectDb = ProjectDbHelper(app)
+
     private val _tasks = MutableStateFlow<List<TaskItem>>(emptyList())
     val tasks: StateFlow<List<TaskItem>> = _tasks.asStateFlow()
 
     private val _routines = MutableStateFlow<List<RoutineEntry>>(emptyList())
     val routines: StateFlow<List<RoutineEntry>> = _routines.asStateFlow()
 
+    private val _projects = MutableStateFlow<List<ProjectItem>>(emptyList())
+    val projects: StateFlow<List<ProjectItem>> = _projects.asStateFlow()
+
+    private val _projectPhotos = MutableStateFlow<List<ProjectPhoto>>(emptyList())
+    val projectPhotos: StateFlow<List<ProjectPhoto>> = _projectPhotos.asStateFlow()
+
     init {
         refresh()
         refreshRoutines()
+        refreshProjects()
     }
 
     fun refresh() {
@@ -30,6 +39,10 @@ class TaskViewModel(app: Application) : AndroidViewModel(app) {
 
     fun refreshRoutines() {
         viewModelScope.launch { _routines.value = withContext(Dispatchers.IO) { routineDb.entries() } }
+    }
+
+    fun refreshProjects() {
+        viewModelScope.launch { _projects.value = withContext(Dispatchers.IO) { projectDb.allProjects() } }
     }
 
     fun toggleRoutine(entry: RoutineEntry) {
@@ -126,6 +139,51 @@ class TaskViewModel(app: Application) : AndroidViewModel(app) {
             ReminderScheduler.cancel(getApplication(), task.id)
             db.delete(task.id)
             _tasks.value = db.all()
+        }
+    }
+
+    fun saveProject(project: ProjectItem) {
+        if (project.name.isBlank()) return
+        viewModelScope.launch(Dispatchers.IO) {
+            if (project.id == 0L) {
+                projectDb.insertProject(project)
+            } else {
+                val oldName = _projects.value.firstOrNull { it.id == project.id }?.name
+                projectDb.updateProject(project)
+                if (!oldName.isNullOrBlank() && oldName != project.name) {
+                    db.renameContext(oldName, project.name)
+                    _tasks.value = db.all()
+                }
+            }
+            _projects.value = projectDb.allProjects()
+        }
+    }
+
+    fun deleteProject(project: ProjectItem) {
+        viewModelScope.launch(Dispatchers.IO) {
+            projectDb.deleteProject(project.id)
+            _projects.value = projectDb.allProjects()
+            _projectPhotos.value = emptyList()
+        }
+    }
+
+    fun loadProjectPhotos(projectId: Long) {
+        viewModelScope.launch {
+            _projectPhotos.value = withContext(Dispatchers.IO) { projectDb.photos(projectId) }
+        }
+    }
+
+    fun addProjectPhoto(projectId: Long, uri: String, caption: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            projectDb.addPhoto(ProjectPhoto(projectId = projectId, uri = uri, caption = caption))
+            _projectPhotos.value = projectDb.photos(projectId)
+        }
+    }
+
+    fun deleteProjectPhoto(projectId: Long, photoId: Long) {
+        viewModelScope.launch(Dispatchers.IO) {
+            projectDb.deletePhoto(photoId)
+            _projectPhotos.value = projectDb.photos(projectId)
         }
     }
 }

@@ -48,6 +48,19 @@ class TaskDbHelper(context: Context) : SQLiteOpenHelper(context, DB_NAME, null, 
         writableDatabase.delete("tasks", "id=?", arrayOf(id.toString()))
     }
 
+    fun renameContext(oldName: String, newName: String) {
+        val cv = ContentValues().apply {
+            put("context_name", newName)
+            put("updated_at", System.currentTimeMillis())
+        }
+        writableDatabase.update(
+            "tasks",
+            cv,
+            "category=? AND context_name=?",
+            arrayOf(TaskCategory.PROJECTS.name, oldName)
+        )
+    }
+
     fun get(id: Long): TaskItem? {
         readableDatabase.query("tasks", null, "id=?", arrayOf(id.toString()), null, null, null, "1").use { c ->
             return if (c.moveToFirst()) c.toTask() else null
